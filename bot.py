@@ -125,7 +125,7 @@ async def solve_reply(chat_id,msg,context,cfg):
         logger.exception("Solver failure for chat %s",chat_id); await msg.edit_text("Calculation failed unexpectedly. Check Railway logs.")
 
 async def start(update,context):
-    await update.message.reply_text("BEAM ANALYSIS ASSISTANT — MANUAL INPUT MODE\n\nManual mode uses the numerical solver and does not use an AI service. I ask for the values step by step, validate them, show a summary and run the Python solver.\n\n/new starts input • /example runs a built-in test • /help shows supported values • /cancel stops")
+    await update.message.reply_text("BEAM ANALYSIS ASSISTANT — MANUAL INPUT MODE\n\nI ask for the values step by step, validate them, show a summary and run the numerical solver.\n\n/new starts input • /example runs a built-in test • /help shows supported values • /cancel stops")
 
 async def help_cmd(update,context):
     await update.message.reply_text("SUPPORTED INPUTS\n\nBeam layouts: cantilever, simply supported, overhanging, propped cantilever and continuous beams, if represented by fixed/pin supports.\n\nStiffness: EI directly (kN·m², MN·m² or N·m²), or E in GPa plus I in m⁴.\nSupports: fixed or pin/roller with positions from the left end.\nLoads: multiple point loads, UDLs, UVLs (start/end intensities), and applied couples.\nSign convention: downward loads positive, upward negative, clockwise couples positive.\n\nConstant EI only. Not supported: springs, settlement, variable EI, frames, axial/inclined loads or shear deformation.\n\nEnter each alternative case (a), (b), etc. as a separate /new session.")
@@ -147,12 +147,12 @@ async def mode_callback(update,context):
         direct_modes.pop(cid,None)
         w={"stage":"length","index":0,"counts":{},"supports":[],"point_loads":[],"distributed_loads":[],"moments":[],"query_points":[],"user_id":q.from_user.id}
         wizards[cid]=w
-        await q.edit_message_text("MANUAL NUMERICAL SOLVER selected. No AI calls will be made.")
+        await q.edit_message_text("Manual numerical mode selected. Enter the requested values step by step.")
         await ask(q.message,w)
     elif q.data=="mode:direct":
         wizards.pop(cid,None); pending.pop(cid,None)
         direct_modes[cid]=q.from_user.id
-        await q.edit_message_text("DIRECT SOLUTION MODE\n\nSend the complete cantilever beam question as text, or upload a clear photo/screenshot. The AI service will interpret the data and produce a worked solution. This mode does not call the Python beam solver.\n\nSend /cancel to exit.")
+        await q.edit_message_text("DIRECT SOLUTION MODE\n\nSend the complete cantilever beam question as text, or upload a clear photo/screenshot. The system will interpret the data and produce a worked solution. This mode does not call the Python beam solver.\n\nSend /cancel to exit.")
 
 async def run_direct(update,context,text_input="",image_bytes=None,mime_type=None):
     msg=update.effective_message
