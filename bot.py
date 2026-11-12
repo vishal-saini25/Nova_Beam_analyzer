@@ -171,16 +171,16 @@ def confirmation_text(extraction: ExtractedProblem) -> str:
         lines.append("")
     lines.append(f"Extraction confidence: {extraction.confidence:.0%}")
     if extraction.assumptions:
-        lines.append("\\nAssumptions:")
+        lines.append("\nAssumptions:")
         lines.extend(f"• {item}" for item in extraction.assumptions[:10])
     if extraction.notes:
-        lines.append("\\nNotes: " + extraction.notes)
+        lines.append( "\nNotes: " + extraction.notes)
     if all_missing:
-        lines.append("\\nMISSING / UNCLEAR — I will not guess:")
+        lines.append("\nMISSING / UNCLEAR — I will not guess:")
         lines.extend(f"• {item}" for item in dict.fromkeys(all_missing))
-        lines.append("\\nSend a correction. No calculation has been run yet.")
+        lines.append("\nSend a correction. No calculation has been run yet.")
     else:
-        lines.append("\\nPlease check every case before calculation.")
+        lines.append("\nPlease check every case before calculation.")
     return "\\n".join(lines)
 
 
@@ -197,7 +197,7 @@ async def run_analysis_and_reply(chat_id: int, status_message, context: ContextT
         for index, (label, case_config) in enumerate(cases, start=1):
             await status_message.edit_text(f"Case {label}: validating and solving ({index}/{len(cases)})...")
             result = await asyncio.wait_for(asyncio.to_thread(analyse, case_config), timeout=30)
-            warning = "" if result["equilibrium_ok"] else "\\nWARNING: equilibrium check failed; treat this result as unverified."
+            warning = "" if result["equilibrium_ok"] else "\nWARNING: equilibrium check failed; treat this result as unverified."
             reports.append(f"===== CASE {label} =====\\n{result['report']}{warning}")
         await status_message.edit_text("All requested cases calculated. Sending text results...")
         await reply_long(status_message, "\\n\\n".join(reports))
@@ -231,7 +231,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Sign convention: downward loads positive; upward loads negative; clockwise couples positive. Positions are measured from the left end.\n\n"
         "The solver supports constant EI beams with fixed/pin supports, point loads, UDL, UVL and applied couples. Variable EI, springs, support settlement, frames and inverse problems are not supported by this solver.\n\n"
         "Text-only output: support reactions, shear/moment/slope/deflection results and requested locations.\n\n"
-        "For token-saving, each natural-language or image problem uses one DeepSeek extraction call. JSON input bypasses DeepSeek entirely."
+        "For token-saving, each natural-language or image problem uses one Gemini extraction call. JSON input bypasses Gemini entirely."
     )
 
 
@@ -254,7 +254,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def json_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     json_mode_chats.add(update.effective_chat.id)
     await update.message.reply_text(
-        "Send the solver configuration as JSON in your next message. This path uses no DeepSeek tokens.\n\n"
+        "Send the solver configuration as JSON in your next message. This path uses no Gemini tokens.\n\n"
         'Example: {"L":5,"E_GPa":200,"section":{"type":"custom","I_m4":0.000083},"supports":[{"type":"pin","x":0},{"type":"pin","x":5}],"point_loads":[{"P_kN":20,"a":2}],"query_points":[2.5]}'
     )
 
