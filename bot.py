@@ -34,30 +34,55 @@ def count(raw,label,maximum=20):
     return v
 
 def prompt(w):
-    s=w["stage"]; i=w.get("index",0)+1
-    prompts={
-      "length":"STEP 1 — Enter total beam length L in metres. Example: 4",
-      "stiffness_mode":"STEP 2 — How is stiffness given? Reply EI (direct flexural rigidity) or E (Young's modulus plus I).",
-      "ei_value":"Enter EI with unit: 65 MNm2, 65000 kNm2, or 65000000 Nm2.",
-      "e_value":"Enter Young's modulus E in GPa. Example: 200",
-      "i_value":"Enter second moment of area I in m^4. Example: 0.000083",
-      "support_count":"How many supports? Enter 1–8. Cantilever: 1; simply supported: 2; continuous beam: 3 or more.",
-      "support_type":f"Support {i}/{w['counts']['supports']}: enter fixed or pin (roller is treated as pin).",
-      "support_x":f"Support {i}/{w['counts']['supports']}: enter its x-position in metres from the LEFT end.",
-      "point_count":"How many concentrated point loads? Enter 0–20.",
-      "point_p":f"Point load {i}/{w['counts']['points']}: enter magnitude in kN. Downward positive; upward negative.",
-      "point_x":f"Point load {i}/{w['counts']['points']}: enter position in metres from the LEFT end.",
-      "dist_count":"How many distributed loads? Enter 0–20. Each UDL or UVL is one load.",
-      "dist_start":f"Distributed load {i}/{w['counts']['distributed']}: enter start position in metres.",
-      "dist_end":f"Distributed load {i}: enter end position in metres.",
-      "dist_w1":f"Distributed load {i}: enter intensity at START in kN/m (downward positive).",
-      "dist_w2":f"Distributed load {i}: enter intensity at END in kN/m. For UDL, repeat the start intensity.",
-      "moment_count":"How many applied couples/moments? Enter 0–20.",
-      "moment_m":f"Couple {i}/{w['counts']['moments']}: enter magnitude in kN·m. Clockwise positive; anticlockwise negative.",
-      "moment_x":f"Couple {i}: enter position in metres from the LEFT end (x=0 is unsupported).",
-      "query_points":"Enter positions for slope/deflection values, comma-separated in metres (e.g. 1,2,3.5,4), or enter none."
-    }
-    return prompts[s]
+    # Build only the active prompt. A dictionary of f-strings evaluates every
+    # entry eagerly and was crashing /new before the support counts existed.
+    s = w["stage"]
+    i = w.get("index", 0) + 1
+    if s == "length":
+        return "STEP 1 — Enter total beam length L in metres. Example: 4"
+    if s == "stiffness_mode":
+        return "STEP 2 — How is stiffness given? Reply EI (direct flexural rigidity) or E (Young's modulus plus I)."
+    if s == "ei_value":
+        return "Enter EI with unit: 65 MNm2, 65000 kNm2, or 65000000 Nm2."
+    if s == "e_value":
+        return "Enter Young's modulus E in GPa. Example: 200"
+    if s == "i_value":
+        return "Enter second moment of area I in m^4. Example: 0.000083"
+    if s == "support_count":
+        return "How many supports? Enter 1–8. Cantilever: 1; simply supported: 2; continuous beam: 3 or more."
+    if s in {"support_type", "support_x"}:
+        total = w.get("counts", {}).get("supports", "?")
+        if s == "support_type":
+            return f"Support {i}/{total}: enter fixed or pin (roller is treated as pin)."
+        return f"Support {i}/{total}: enter its x-position in metres from the LEFT end."
+    if s == "point_count":
+        return "How many concentrated point loads? Enter 0–20."
+    if s in {"point_p", "point_x"}:
+        total = w.get("counts", {}).get("points", "?")
+        if s == "point_p":
+            return f"Point load {i}/{total}: enter magnitude in kN. Downward positive; upward negative."
+        return f"Point load {i}/{total}: enter position in metres from the LEFT end."
+    if s == "dist_count":
+        return "How many distributed loads? Enter 0–20. Each UDL or UVL is one load."
+    if s in {"dist_start", "dist_end", "dist_w1", "dist_w2"}:
+        total = w.get("counts", {}).get("distributed", "?")
+        if s == "dist_start":
+            return f"Distributed load {i}/{total}: enter start position in metres."
+        if s == "dist_end":
+            return f"Distributed load {i}: enter end position in metres."
+        if s == "dist_w1":
+            return f"Distributed load {i}: enter intensity at START in kN/m (downward positive)."
+        return f"Distributed load {i}: enter intensity at END in kN/m. For UDL, repeat the start intensity."
+    if s == "moment_count":
+        return "How many applied couples/moments? Enter 0–20."
+    if s in {"moment_m", "moment_x"}:
+        total = w.get("counts", {}).get("moments", "?")
+        if s == "moment_m":
+            return f"Couple {i}/{total}: enter magnitude in kN·m. Clockwise positive; anticlockwise negative."
+        return f"Couple {i}: enter position in metres from the LEFT end (x=0 is unsupported)."
+    if s == "query_points":
+        return "Enter positions for slope/deflection values, comma-separated in metres (e.g. 1,2,3.5,4), or enter none."
+    return "Unknown input step. Send /cancel and then /new."
 
 async def ask(msg,w): await msg.reply_text(prompt(w))
 
