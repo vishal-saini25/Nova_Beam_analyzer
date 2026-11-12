@@ -1,23 +1,11 @@
-"""Direct AI beam-problem solver (AI provider).
-
-This module is intentionally independent of beam_analyser.py and solver_service.py.
-It sends the complete text/image problem to the configured AI model and returns its worked
-solution. It does not build a solver configuration or run Python beam equations.
-
-Environment:
-    GEMINI_API_KEY  Required
-    GEMINI_MODEL    Optional; defaults to gemini-3.8-flash
+"""Direct beam-problem solver using Groq chat completions.
+Model: openai/gpt-oss-120b. This model accepts text input only.
 """
 from __future__ import annotations
-
 import os
-from typing import Optional
+from groq import Groq
 
-from google import genai
-from google.genai import types
-
-
-MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 SYSTEM_PROMPT = r"""
 ROLE
@@ -125,64 +113,43 @@ QUALITY CONTROL
   against engineering design standards before real-world use.
 """
 
-
 class DirectSolverError(RuntimeError):
-    """Raised when Gemini cannot produce a usable direct solution."""
+    """Raised when the direct solution service cannot produce a usable answer."""
 
 
-def solve_direct(
-    problem_text: str = "",
-    image_bytes: Optional[bytes] = None,
-    image_mime_type: Optional[str] = None,
-) -> str:
-    """Solve a cantilever problem directly with the configured AI model.
-
-    Provide problem_text, image_bytes, or both. No local beam solver is used.
-    """
-    api_key = os.getenv("GEMINI_API_KEY")
+def solve_direct(problem_text: str = "", image_bytes=None, image_mime_type=None) -> str:
+    """Solve a cantilever problem directly with Groq; no local beam solver is used."""
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise DirectSolverError("The AI service is not configured. Please contact the bot administrator.")
-
-    if not (problem_text or "").strip() and not image_bytes:
-        raise ValueError("Send a written beam problem or upload a clear image.")
-
-    prompt = (
-        SYSTEM_PROMPT
-        + "\n\nUSER PROBLEM\n"
-        + ((problem_text or "").strip() or
-           "Solve the cantilever beam problem shown in the attached image.")
-    )
-
-    parts = [types.Part.from_text(text=prompt)]
+        raise DirectSolverError("The direct solution service is not configured. Please contact the administrator.")
     if image_bytes:
-        mime = (image_mime_type or "image/jpeg").lower()
-        if mime not in {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}:
-            raise ValueError("Unsupported image type. Send JPEG, PNG, or WebP.")
-        if len(image_bytes) > 15 * 1024 * 1024:
-            raise ValueError("Image is too large. Please send an image under 15 MB.")
-        parts.append(types.Part.from_bytes(data=image_bytes, mime_type=mime))
-
-    try:
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=[types.Content(role="user", parts=parts)],
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                temperature=0.15,
-                max_output_tokens=8192,
-            ),
+        raise ValueError(
+            "This model accepts text only, not beam images. Please type the problem statement "
+            "and include all dimensions, load values and positions."
         )
-        answer = (getattr(response, "text", None) or "").strip()
+    if not (problem_text or "").strip():
+        raise ValueError("Send the beam problem as text, including dimensions, loads and positions.")
+
+    prompt = SYSTEM_PROMPT + "\n\nUSER PROBLEM\n" + problem_text.strip()
+    try:
+        client = Groq(api_key=api_key)
+        completion = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=1,
+            max_completion_tokens=8192,
+            top_p=1,
+            reasoning_effort="medium",
+            stream=False,
+            stop=None,
+        )
+        answer = (completion.choices[0].message.content or "").strip()
         if not answer:
-            raise DirectSolverError(
-                "The AI service returned an empty response. Please retry or provide a clearer question/image."
-            )
+            raise DirectSolverError("The service returned an empty answer. Please retry.")
         return answer
     except DirectSolverError:
         raise
     except Exception as exc:
-        # Keep the underlying exception in Railway logs; avoid exposing secrets.
         raise DirectSolverError(
-            f"AI request failed ({type(exc).__name__}). Check Railway logs and retry."
+            f"Direct solution request failed ({type(exc).__name__}). Check Railway logs."
         ) from exc
