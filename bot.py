@@ -6,7 +6,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from beam_analyser import examples, build_model
 from solver_service import analyse, BeamInputError
-from ai_solver import solve_direct, GeminiBeamError
+from ai_solver import solve_direct, DirectSolverError
 
 TOKEN=os.getenv("TELEGRAM_TOKEN_ID")
 LOG_LEVEL=os.getenv("LOG_LEVEL","INFO").upper()
@@ -125,7 +125,7 @@ async def solve_reply(chat_id,msg,context,cfg):
         logger.exception("Solver failure for chat %s",chat_id); await msg.edit_text("Calculation failed unexpectedly. Check Railway logs.")
 
 async def start(update,context):
-    await update.message.reply_text("BEAM ANALYSIS ASSISTANT — MANUAL INPUT MODE\n\nNo AI extraction, Gemini, DeepSeek or LLM API calls. I ask for the values step by step, validate them, show a summary and run the Python solver.\n\n/new starts input • /example runs a built-in test • /help shows supported values • /cancel stops")
+    await update.message.reply_text("BEAM ANALYSIS ASSISTANT — MANUAL INPUT MODE\n\nManual mode uses the numerical solver and does not use an AI service. I ask for the values step by step, validate them, show a summary and run the Python solver.\n\n/new starts input • /example runs a built-in test • /help shows supported values • /cancel stops")
 
 async def help_cmd(update,context):
     await update.message.reply_text("SUPPORTED INPUTS\n\nBeam layouts: cantilever, simply supported, overhanging, propped cantilever and continuous beams, if represented by fixed/pin supports.\n\nStiffness: EI directly (kN·m², MN·m² or N·m²), or E in GPa plus I in m⁴.\nSupports: fixed or pin/roller with positions from the left end.\nLoads: multiple point loads, UDLs, UVLs (start/end intensities), and applied couples.\nSign convention: downward loads positive, upward negative, clockwise couples positive.\n\nConstant EI only. Not supported: springs, settlement, variable EI, frames, axial/inclined loads or shear deformation.\n\nEnter each alternative case (a), (b), etc. as a separate /new session.")
@@ -135,7 +135,7 @@ async def new_cmd(update,context):
     pending.pop(cid,None); wizards.pop(cid,None); direct_modes.pop(cid,None)
     keyboard=InlineKeyboardMarkup([
         [InlineKeyboardButton("1. Enter values manually",callback_data="mode:manual")],
-        [InlineKeyboardButton("2. Direct Solution (Gemini AI)",callback_data="mode:direct")]
+        [InlineKeyboardButton("2. Direct Solution",callback_data="mode:direct")]
     ])
     await update.message.reply_text("Choose how you want to solve this cantilever beam problem:",reply_markup=keyboard)
 
@@ -152,28 +152,28 @@ async def mode_callback(update,context):
     elif q.data=="mode:direct":
         wizards.pop(cid,None); pending.pop(cid,None)
         direct_modes[cid]=q.from_user.id
-        await q.edit_message_text("DIRECT SOLUTION — GEMINI AI MODE\n\nSend the complete cantilever beam question as text, or upload a clear photo/screenshot. Gemini will interpret the data and produce a worked solution. This mode does not call the Python beam solver.\n\nSend /cancel to exit.")
+        await q.edit_message_text("DIRECT SOLUTION MODE\n\nSend the complete cantilever beam question as text, or upload a clear photo/screenshot. The AI service will interpret the data and produce a worked solution. This mode does not call the Python beam solver.\n\nSend /cancel to exit.")
 
 async def run_direct(update,context,text_input="",image_bytes=None,mime_type=None):
     msg=update.effective_message
-    status=await msg.reply_text("Gemini is analysing the beam problem. This may take a little time...")
+    status=await msg.reply_text("Analysing your beam problem. This may take a little time...")
     try:
         answer=await asyncio.wait_for(asyncio.to_thread(solve_direct,text_input,image_bytes,mime_type),timeout=150)
-        await status.edit_text("Gemini direct solution completed. Sending worked solution...")
+        await status.edit_text("Direct solution completed. Sending worked solution...")
         await reply_long(msg,answer)
     except asyncio.TimeoutError:
-        await status.edit_text("Gemini request timed out. Please retry with a shorter prompt or clearer image.")
-    except (GeminiBeamError,ValueError) as exc:
+        await status.edit_text("The request timed out. Please retry with a shorter prompt or clearer image.")
+    except (DirectSolverError,ValueError) as exc:
         await status.edit_text(f"Direct solution could not be completed: {exc}")
     except Exception:
-        logger.exception("Direct Gemini solution failed for chat %s",update.effective_chat.id)
+        logger.exception("Direct solution failed for chat %s",update.effective_chat.id)
         await status.edit_text("Direct solution failed unexpectedly. Check Railway logs.")
 
 async def image_handler(update,context):
     cid=update.effective_chat.id
     uid=update.effective_user.id
     if direct_modes.get(cid)!=uid:
-        await update.effective_message.reply_text("To solve an image with Gemini, send /new and choose Direct Solution.")
+        await update.effective_message.reply_text("To solve an image, send /new and choose Direct Solution.")
         return
     msg=update.effective_message
     try:
@@ -318,7 +318,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE,image_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,wizard_text))
     app.add_error_handler(error_handler)
-    logger.info("Starting beam bot with independent manual solver and optional Gemini direct-solution mode.")
+    logger.info("Starting beam bot with independent manual solver and optional direct-solution mode.")
     app.run_polling(drop_pending_updates=False,allowed_updates=Update.ALL_TYPES)
 
 if __name__=="__main__": main()
