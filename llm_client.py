@@ -124,16 +124,32 @@ def extract_problem(user_text: str, *, image_bytes: bytes | None = None,
     except LLMExtractionError:
         raise
     except Exception as exc:
-        code = getattr(exc, "code", None)
+        response = getattr(exc, "response", None)
+        code = (
+            getattr(exc, "code", None)
+            or getattr(exc, "status_code", None)
+            or getattr(response, "status_code", None)
+        )
+        try:
+            code = int(code) if code is not None else None
+        except (TypeError, ValueError):
+            code = None
         message = str(exc).replace(api_key, "[REDACTED]")
-        logger.exception("Gemini Interactions API failed; code=%s error_type=%s message=%s",
-                         code, type(exc).__name__, message[:500])
-        if code == 503:
+        logger.exception(
+            "Gemini Interactions API failed; http_status=%s error_type=%s message=%s",
+            code, type(exc).__name__, message[:800],
+        )
+        if code in {500, 502, 503, 504} or type(exc).__name__ in {
+            "InternalServerError", "ServerError", "ServiceUnavailable"
+        }:
             raise LLMExtractionError(
-                "Gemini is temporarily overloaded (HTTP 503). I tried once more automatically, but it is still unavailable. Please retry in 30–60 seconds; no calculation was run."
+                f"Google Gemini returned a temporary server error ({code or type(exc).__name__}). "
+                "The request was retried automatically but the service is still unavailable. "
+                "Wait 30–60 seconds and try again; no calculation was run."
             ) from exc
         raise LLMExtractionError(
-            f"Gemini API request failed ({type(exc).__name__}, HTTP {code or 'unknown'}). Check Railway logs. No calculation was run."
+            f"Gemini API request failed ({type(exc).__name__}, HTTP {code or 'status unavailable'}). "
+            "Check the full Railway traceback. No calculation was run."
         ) from exc
 
 
