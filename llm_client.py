@@ -1,7 +1,5 @@
 """Single-call DeepSeek extraction for text or one Telegram image."""
-
 import base64
-import json
 import logging
 import os
 from typing import Any
@@ -30,12 +28,14 @@ def _image_data_url(image_bytes: bytes, mime_type: str) -> str:
 
 def _parse_json_content(content: str) -> ExtractedProblem:
     if not content or not content.strip():
-        raise LLMExtractionError("The model returned an empty extraction.")
+        raise LLMExtractionError("DeepSeek returned an empty JSON response. Please retry once; no calculation was run.")
     try:
-        return parse_extraction(content)
+        return parse_extraction(content.strip())
     except Exception as exc:
-        # No automatic repair call: avoid hidden extra token usage.
-        raise LLMExtractionError("The model response was not valid extraction JSON.") from exc
+        logger.warning("DeepSeek JSON did not match extraction schema (%s)", type(exc).__name__)
+        raise LLMExtractionError(
+            "DeepSeek returned JSON, but it did not contain the required beam-case fields. Please retry with a clearer question."
+        ) from exc
 
 
 def _request_once(client, *, model: str, messages: list[dict[str, Any]], max_tokens: int) -> ExtractedProblem:
@@ -47,14 +47,28 @@ def _request_once(client, *, model: str, messages: list[dict[str, Any]], max_tok
         max_tokens=max_tokens,
         extra_body={"thinking": {"type": "disabled"}},
     )
-    content = response.choices[0].message.content or ""
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        raise LLMExtractionError("DeepSeek returned no completion choice.")
+    choice = choices[0]
+    message = getattr(choice, "message", None)
+    content = getattr(message, "content", None) or ""
+    finish_reason = getattr(choice, "finish_reason", None)
     usage = getattr(response, "usage", None)
     if usage:
         logger.info(
-            "DeepSeek extraction complete; prompt_tokens=%s completion_tokens=%s",
+            "DeepSeek extraction complete; prompt_tokens=%s completion_tokens=%s finish_reason=%s",
             getattr(usage, "prompt_tokens", "?"),
             getattr(usage, "completion_tokens", "?"),
+            finish_reason,
         )
+    if not content.strip():
+        logger.warning("DeepSeek returned blank content; finish_reason=%s", finish_reason)
+        if finish_reason == "length":
+            raise LLMExtractionError("DeepSeek reached its output-token limit. Increase DEEPSEEK_MAX_OUTPUT_TOKENS or shorten the question.")
+        raise LLMExtractionError("DeepSeek returned an empty JSON response. Please retry; no calculation was run.")
+    if finish_reason == "length":
+        raise LLMExtractionError("DeepSeek truncated the extracted cases. Increase DEEPSEEK_MAX_OUTPUT_TOKENS and retry.")
     return _parse_json_content(content)
 
 
@@ -67,11 +81,8 @@ def extract_problem(
     """Call DeepSeek once and return validated structured beam information."""
     api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
-        raise LLMUnavailable(
-            "DEEPSEEK_API_KEY is not configured. You can still submit a JSON beam config."
-        )
+        raise LLMUnavailable("DEEPSEEK_API_KEY is not configured.")
 
-    # Import lazily so offline schema tests do not require the API SDK.
     from openai import OpenAI
 
     client = OpenAI(
@@ -83,8 +94,7 @@ def extract_problem(
 
     question = (user_text or "").strip()
     if not question:
-        question = "Extract the beam dimensions, supports, material/section data, loads and requested results from the attached image."
-
+        question = "Read the attached beam question and diagram. Extract all requested beam cases as JSON."
     if image_bytes is None:
         user_content: Any = question
     else:
@@ -92,13 +102,10 @@ def extract_problem(
             raise LLMExtractionError("Image MIME type is missing.")
         user_content = [
             {"type": "text", "text": question},
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": _image_data_url(image_bytes, image_mime_type),
-                    "detail": "high",
-                },
-            },
+            {"type": "image_url", "image_url": {
+                "url": _image_data_url(image_bytes, image_mime_type),
+                "detail": "high",
+            }},
         ]
 
     try:
@@ -109,14 +116,14 @@ def extract_problem(
                 {"role": "system", "content": BEAM_EXTRACTION_SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
-            max_tokens=int(os.getenv("DEEPSEEK_MAX_OUTPUT_TOKENS", "1600")),
+            max_tokens=int(os.getenv("DEEPSEEK_MAX_OUTPUT_TOKENS", "2400")),
         )
     except LLMExtractionError:
         raise
     except Exception as exc:
-        logger.warning("DeepSeek request failed (%s)", type(exc).__name__)
+        logger.exception("DeepSeek API request failed (%s)", type(exc).__name__)
         raise LLMExtractionError(
-            "DeepSeek could not read this problem right now. Please retry or use /json."
+            "DeepSeek API request failed. Check Railway logs for the exact API error and retry."
         ) from exc
 
 
