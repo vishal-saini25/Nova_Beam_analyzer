@@ -1,7 +1,7 @@
-"""Direct AI beam-problem solver (Gemini only).
+"""Direct AI beam-problem solver (AI provider).
 
 This module is intentionally independent of beam_analyser.py and solver_service.py.
-It sends the complete text/image problem to Gemini and returns Gemini's worked
+It sends the complete text/image problem to the configured AI model and returns its worked
 solution. It does not build a solver configuration or run Python beam equations.
 
 Environment:
@@ -126,7 +126,7 @@ QUALITY CONTROL
 """
 
 
-class GeminiBeamError(RuntimeError):
+class DirectSolverError(RuntimeError):
     """Raised when Gemini cannot produce a usable direct solution."""
 
 
@@ -135,13 +135,13 @@ def solve_direct(
     image_bytes: Optional[bytes] = None,
     image_mime_type: Optional[str] = None,
 ) -> str:
-    """Solve a cantilever problem directly with Gemini.
+    """Solve a cantilever problem directly with the configured AI model.
 
     Provide problem_text, image_bytes, or both. No local beam solver is used.
     """
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        raise GeminiBeamError("GEMINI_API_KEY is missing from the environment.")
+        raise DirectSolverError("The AI service is not configured. Please contact the bot administrator.")
 
     if not (problem_text or "").strip() and not image_bytes:
         raise ValueError("Send a written beam problem or upload a clear image.")
@@ -175,14 +175,14 @@ def solve_direct(
         )
         answer = (getattr(response, "text", None) or "").strip()
         if not answer:
-            raise GeminiBeamError(
-                "Gemini returned an empty response. Please retry or provide a clearer question/image."
+            raise DirectSolverError(
+                "The AI service returned an empty response. Please retry or provide a clearer question/image."
             )
         return answer
-    except GeminiBeamError:
+    except DirectSolverError:
         raise
     except Exception as exc:
         # Keep the underlying exception in Railway logs; avoid exposing secrets.
-        raise GeminiBeamError(
-            f"Gemini request failed ({type(exc).__name__}). Check Railway logs and retry."
+        raise DirectSolverError(
+            f"AI request failed ({type(exc).__name__}). Check Railway logs and retry."
         ) from exc
