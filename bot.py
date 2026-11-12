@@ -153,33 +153,35 @@ def short_config_summary(config: dict[str, Any] | None) -> list[str]:
     return lines
 
 
+def extraction_cases(extraction: ExtractedProblem):
+    if extraction.cases:
+        return [(c.label, c.config, list(c.missing_info) + validate_config_shape(c.config), c.unknowns_requested)
+                for c in extraction.cases]
+    return [("Main", extraction.config, validate_config_shape(extraction.config), extraction.unknowns_requested)]
+
+
 def confirmation_text(extraction: ExtractedProblem) -> str:
     lines = ["BEAM DATA EXTRACTED", ""]
-    lines.extend(short_config_summary(extraction.config))
-    lines.extend(["", "Requested: " + ("; ".join(extraction.unknowns_requested) or "complete analysis")])
+    all_missing = list(extraction.missing_info)
+    for label, config, missing, requested in extraction_cases(extraction):
+        lines.append(f"CASE {label}")
+        lines.extend(short_config_summary(config))
+        lines.append("Requested: " + ("; ".join(requested) or "complete analysis"))
+        all_missing.extend(f"Case {label}: {item}" for item in missing)
+        lines.append("")
     lines.append(f"Extraction confidence: {extraction.confidence:.0%}")
-
     if extraction.assumptions:
-        lines.append("\nAssumptions:")
-        lines.extend(f"• {item}" for item in extraction.assumptions[:8])
-
+        lines.append("\\nAssumptions:")
+        lines.extend(f"• {item}" for item in extraction.assumptions[:10])
     if extraction.notes:
-        lines.append("\nNotes: " + extraction.notes)
-
-    missing = list(extraction.missing_info)
-    missing.extend(validate_config_shape(extraction.config))
-    if missing:
-        lines.append("\nMISSING / UNCLEAR — I will not guess:")
-        # Preserve order while removing exact duplicates.
-        seen = set()
-        for item in missing:
-            if item not in seen:
-                lines.append(f"• {item}")
-                seen.add(item)
-        lines.append("\nSend a corrected or clearer question/image. No calculation has been run yet.")
+        lines.append("\\nNotes: " + extraction.notes)
+    if all_missing:
+        lines.append("\\nMISSING / UNCLEAR — I will not guess:")
+        lines.extend(f"• {item}" for item in dict.fromkeys(all_missing))
+        lines.append("\\nSend a correction. No calculation has been run yet.")
     else:
-        lines.append("\nPlease check the extracted values before calculation.")
-    return "\n".join(lines)
+        lines.append("\\nPlease check every case before calculation.")
+    return "\\n".join(lines)
 
 
 async def reply_long(message, text: str) -> None:
@@ -187,34 +189,25 @@ async def reply_long(message, text: str) -> None:
         await message.reply_text(part)
 
 
-async def run_analysis_and_reply(chat_id: int, status_message, context: ContextTypes.DEFAULT_TYPE, config: dict[str, Any]) -> None:
-    """Run solver off the event loop and send only text results."""
-    stages = [
-        "1/3 Validating beam configuration...",
-        "2/3 Computing reactions, shear, moment, slope and deflection...",
-        "3/3 Preparing the text solution...",
-    ]
+async def run_analysis_and_reply(chat_id: int, status_message, context: ContextTypes.DEFAULT_TYPE, config: dict[str, Any] | list[tuple[str, dict[str, Any]]]) -> None:
+    """Run each extracted case independently through the unchanged numerical solver."""
+    cases = config if isinstance(config, list) else [("Main", config)]
     try:
-        await status_message.edit_text(stages[0])
-        await status_message.edit_text(stages[1])
-        result = await asyncio.wait_for(
-            asyncio.to_thread(analyse, config),
-            timeout=30,
-        )
-        await status_message.edit_text(stages[2])
-        if not result["equilibrium_ok"]:
-            await status_message.edit_text(
-                "WARNING: The solver's equilibrium check did not pass. "
-                "The following result is marked unverified."
-            )
-        await reply_long(status_message, result["report"])
+        reports = []
+        for index, (label, case_config) in enumerate(cases, start=1):
+            await status_message.edit_text(f"Case {label}: validating and solving ({index}/{len(cases)})...")
+            result = await asyncio.wait_for(asyncio.to_thread(analyse, case_config), timeout=30)
+            warning = "" if result["equilibrium_ok"] else "\\nWARNING: equilibrium check failed; treat this result as unverified."
+            reports.append(f"===== CASE {label} =====\\n{result['report']}{warning}")
+        await status_message.edit_text("All requested cases calculated. Sending text results...")
+        await reply_long(status_message, "\\n\\n".join(reports))
     except asyncio.TimeoutError:
-        await status_message.edit_text("The calculation exceeded the 30-second limit. Check the beam configuration and try again.")
+        await status_message.edit_text("A calculation exceeded the 30-second limit. Check the beam configuration and try again.")
     except BeamInputError as exc:
-        await status_message.edit_text(f"The solver could not validate this beam: {exc}")
+        await status_message.edit_text(f"The solver could not validate a case: {exc}")
     except Exception:
         logger.exception("Unexpected solver failure for chat %s", chat_id)
-        await status_message.edit_text("The calculation failed unexpectedly. The error was logged for debugging; please check your inputs and try again.")
+        await status_message.edit_text("The calculation failed unexpectedly. The error was logged for debugging; please check your inputs.")
 
 
 # -------------------- Commands --------------------
@@ -335,16 +328,24 @@ async def process_problem(
             await status.edit_text("This problem needs a solver extension and was not calculated.\n\n" + details)
             return
 
-        # Catch obvious physical/configuration errors before showing Confirm.
-        missing = list(extraction.missing_info) + validate_config_shape(extraction.config)
-        if not missing and extraction.config:
-            try:
-                from beam_analyser import build_model
-                build_model(extraction.config)
-            except Exception as exc:
-                missing.append("Configuration validation: " + str(exc))
-        # Keep validation findings on the extraction so the confirmation card
-        # displays them and the confirm callback cannot bypass them.
+        # Normalize old one-config responses, then validate every independent case.
+        if not extraction.cases and extraction.config:
+            from schema import BeamCase
+            extraction.cases = [BeamCase(label="Main", config=extraction.config,
+                                          unknowns_requested=extraction.unknowns_requested)]
+        if extraction.cases:
+            extraction.config = extraction.cases[0].config
+        from beam_analyser import build_model
+        missing = list(extraction.missing_info)
+        for case in extraction.cases:
+            case_missing = list(case.missing_info) + validate_config_shape(case.config)
+            if not case_missing and case.config:
+                try:
+                    build_model(case.config)
+                except Exception as exc:
+                    case_missing.append("Configuration validation: " + str(exc))
+            case.missing_info = list(dict.fromkeys(case_missing))
+            missing.extend(f"Case {case.label}: {item}" for item in case_missing)
         extraction.missing_info = list(dict.fromkeys(missing))
 
         pending[chat_id] = {
@@ -376,10 +377,10 @@ async def process_problem(
         logger.info("Problem extraction rejected for chat %s (%s)", chat_id, type(exc).__name__)
         await status.edit_text(
             f"I could not safely extract a complete beam configuration: {exc}\n\n"
-            "Please clarify the missing values or use /json. No calculation was run."
+            "Please clarify the missing values. You can also use /json for manual input. No calculation was run."
         )
     except asyncio.TimeoutError:
-        await status.edit_text("Problem extraction timed out. Please retry with a clearer, shorter question or use /json.")
+        await status.edit_text("Problem extraction timed out. Please retry with a clearer, shorter question.")
     except Exception:
         logger.exception("Unexpected input-processing failure for chat %s", chat_id)
         await status.edit_text("I could not process that message. Please try again with a clearer question or image.")
@@ -461,7 +462,8 @@ async def confirmation_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     if action == "confirm":
         extraction: ExtractedProblem = state["extraction"]
-        if extraction.missing_info or validate_config_shape(extraction.config):
+        cases = extraction_cases(extraction)
+        if extraction.missing_info or any(missing for _, _, missing, _ in cases):
             await query.edit_message_text("Required information is still missing. Send the missing values before solving.")
             return
         pending.pop(chat_id, None)
@@ -470,7 +472,7 @@ async def confirmation_callback(update: Update, context: ContextTypes.DEFAULT_TY
             return
         chat_locks.add(chat_id)
         try:
-            await run_analysis_and_reply(chat_id, query.message, context, extraction.config)
+            await run_analysis_and_reply(chat_id, query.message, context, [(label, cfg) for label, cfg, _, _ in cases])
         finally:
             chat_locks.discard(chat_id)
 
