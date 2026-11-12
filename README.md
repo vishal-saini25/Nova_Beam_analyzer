@@ -1,27 +1,27 @@
-# Beam Analysis Assistant (Telegram + DeepSeek + verified solver)
+# Beam Analysis Assistant (Telegram + Gemini + verified solver)
 
-A Telegram long-polling bot that reads beam questions in text or from one image, extracts one or more independent beam-case configurations with DeepSeek Flash in one call, validates each in Python, and passes each case to the supplied `beam_analyser.py` solver. Final results are **text only**: no diagrams, plot images, or second LLM explanation call.
+A Telegram long-polling bot that reads beam questions in text or from one image, extracts one or more independent beam-case configurations with Gemini Flash in one call, validates each in Python, and passes each case to the supplied `beam_analyser.py` solver. Final results are **text only**: no diagrams, plot images, or second LLM explanation call.
 
 ## Architecture
 
 1. User sends a text problem or one JPEG/PNG/GIF/WebP image.
-2. `llm_client.py` makes one DeepSeek extraction call with JSON output and thinking disabled. Image input is sent in the same call as the text/caption.
+2. `llm_client.py` makes one Gemini extraction call with schema-constrained JSON output and low thinking level. Image input is sent in the same call as the text/caption.
 3. `schema.py` validates the extraction shape; `beam_analyser.build_model()` checks engineering inputs.
 4. The bot shows every extracted case in one confirmation summary and waits for Confirm / Edit / Cancel. Multi-part questions (a), (b), etc. are kept as separate cases.
 5. On confirmation, `solver_service.py` runs the original numerical solver and captures its text report.
 6. Telegram receives the report as text. No model call is used to explain calculated values.
 
-JSON input bypasses DeepSeek entirely. This is useful when the API key is missing or when the user wants to avoid token charges.
+JSON input bypasses Gemini entirely. This is useful when the API key is missing or when the user wants to avoid token charges.
 
 ## Files
 
 - `bot.py`: Telegram commands, text/image inputs, confirmation flow, rate limiting.
-- `llm_client.py`: one-call DeepSeek parser for text and images.
+- `llm_client.py`: one-call Gemini parser for text and images.
 - `prompts.py`: compact, static extraction prompt.
 - `schema.py`: Pydantic extraction schema and required-field checks for one or multiple cases.
 - `solver_service.py`: wrapper around the supplied solver; returns a deterministic text report.
 - `beam_analyser.py`: original uploaded solver, kept intact.
-- `tests/`: offline tests; no DeepSeek request is made during tests.
+- `tests/`: offline tests; no Gemini request is made during tests.
 
 ## Supported solver scope
 
@@ -38,7 +38,7 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
 $env:TELEGRAM_TOKEN_ID = "YOUR_BOT_TOKEN"
-$env:DEEPSEEK_API_KEY = "YOUR_DEEPSEEK_API_KEY"
+$env:GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
 python bot.py
 ```
 
@@ -53,7 +53,7 @@ Do not commit real tokens. `.env.example` is a variable-name template only; the 
 - `/new` — clear pending conversation state
 - `/cancel` — cancel pending state
 
-You can also paste a raw solver config JSON object directly; it bypasses DeepSeek.
+You can also paste a raw solver config JSON object directly; it bypasses Gemini.
 
 ## Railway deployment (separate worker service)
 
@@ -62,9 +62,9 @@ You can also paste a raw solver config JSON object directly; it bypasses DeepSee
 3. Use the repository root as the service root. Railway should detect `Procfile` and start the worker with `python bot.py`.
 4. Add these variables in Railway:
    - `TELEGRAM_TOKEN_ID` = token from BotFather for this separate beam-analysis bot.
-   - `DEEPSEEK_API_KEY` = your DeepSeek API key (needed for natural-language and image extraction).
-   - `DEEPSEEK_MODEL` = `deepseek-flash` (optional; this is the default).
-   - `DEEPSEEK_MAX_OUTPUT_TOKENS` = `2400` (optional; useful for questions with multiple subparts).
+   - `GEMINI_API_KEY` = your Gemini API key (needed for natural-language and image extraction).
+   - `GEMINI_MODEL` = `gemini-3.8-flash` (optional; this is the default).
+   - `GEMINI_MAX_OUTPUT_TOKENS` = `2400` (optional; useful for questions with multiple subparts).\n   - `GEMINI_THINKING_LEVEL` = `low` (optional; allowed: low, medium, high).
    - `LOG_LEVEL` = `INFO` (optional).
 5. Deploy and inspect logs for `Beam Analysis Assistant starting in long-polling mode`.
 6. Test `/start`, `/example`, a text problem, then an image problem.
@@ -74,14 +74,14 @@ This is a worker using Telegram long polling. It does not need a public HTTP dom
 ## Token-saving choices
 
 - One extraction call per text/image problem, including all subparts and alternative loading cases.
-- Thinking mode disabled for extraction.
+- Low thinking level for extraction to reduce latency and token usage.
 - JSON output and a capped response size.
 - No duplicate extraction for consistency checking.
 - No LLM repair loop; ask the user to clarify if extraction/validation fails.
 - No LLM explanation call; result text comes from the numerical solver.
-- JSON input and `/example` require zero DeepSeek calls.
+- JSON input and `/example` require zero Gemini calls.
 
-Image analysis consumes image tokens too. DeepSeek Flash supports JPEG, PNG, GIF and WebP. It processes image inputs as part of the same extraction call; very small labels or blurry diagrams may still need user clarification.
+Image analysis consumes image tokens too. Gemini accepts JPEG, PNG, GIF and WebP as image input in the same Interactions API call; very small labels or blurry diagrams may still need user clarification. Google Search is intentionally not enabled because beam-question extraction should use the supplied problem, not web search.
 
 ## Tests
 
