@@ -1,0 +1,4 @@
+python-telegram-bot==22.8
+openai==3.49.0
+pydantic==2.14.3
+numpy==2.5.4
