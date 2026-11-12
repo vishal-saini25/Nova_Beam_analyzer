@@ -104,3 +104,10 @@ The solver was executed during preparation and all 30 built-in self-checks passe
 - Engineering calculations should be independently checked before design or construction decisions.
 - Conversation state is in memory and is lost if Railway restarts the worker.
 - Inverse problems and solver extensions are not silently approximated.
+
+
+## Manual input mode (no AI/API calls)
+
+Run /new in Telegram. The bot asks for beam length, stiffness (EI or E + I), support count/types/positions, point loads, distributed loads (UDL/UVL), applied couples and query positions. It validates the complete configuration, displays a summary for confirmation, then runs the existing Python solver. No Gemini, DeepSeek, Google Gen AI SDK or other LLM API is used. Use a separate /new session for each alternative case (a), (b), etc.
+
+Supported solver scope: constant-EI beams; fixed/pin supports; point loads; linearly varying distributed loads; applied couples. Downward loads are positive, upward loads negative, clockwise couples positive. Positions are measured from the left end. Springs, settlements, variable EI, frames, axial/inclined loads and shear deformation are not supported.
