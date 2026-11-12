@@ -4,6 +4,7 @@ import logging
 import os
 
 from google import genai
+from google.genai import types
 
 from prompts import BEAM_EXTRACTION_SYSTEM_PROMPT
 from schema import ExtractedProblem, parse_extraction
@@ -67,6 +68,7 @@ def _request_once(client, *, model: str, user_text: str, image_bytes: bytes | No
             "max_output_tokens": max_output_tokens,
             "thinking_level": os.getenv("GEMINI_THINKING_LEVEL", "low").lower(),
         },
+        timeout=60,
     )
     content = getattr(response, "output_text", None) or ""
     usage = getattr(response, "usage", None)
@@ -85,7 +87,7 @@ def _request_once(client, *, model: str, user_text: str, image_bytes: bytes | No
 
 def extract_problem(user_text: str, *, image_bytes: bytes | None = None,
                     image_mime_type: str | None = None) -> ExtractedProblem:
-    """Call Gemini once and return validated structured beam data."""
+    """Call Gemini once; retry transient service failures once with a short bounded delay."""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise LLMUnavailable("GEMINI_API_KEY is not configured in Railway variables.")
@@ -101,7 +103,20 @@ def extract_problem(user_text: str, *, image_bytes: bytes | None = None,
         raise LLMExtractionError("GEMINI_THINKING_LEVEL must be low, medium, or high.")
 
     try:
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(
+                timeout=30000,
+                retry_options=types.HttpRetryOptions(
+                    attempts=2,
+                    initial_delay=1.0,
+                    max_delay=2.0,
+                    exp_base=2.0,
+                    jitter=0.2,
+                    http_status_codes=[408, 429, 500, 502, 503, 504],
+                ),
+            ),
+        )
         return _request_once(
             client, model=model, user_text=question, image_bytes=image_bytes,
             image_mime_type=image_mime_type, max_output_tokens=max_output_tokens,
@@ -109,9 +124,16 @@ def extract_problem(user_text: str, *, image_bytes: bytes | None = None,
     except LLMExtractionError:
         raise
     except Exception as exc:
-        logger.exception("Gemini Interactions API request failed (%s)", type(exc).__name__)
+        code = getattr(exc, "code", None)
+        message = str(exc).replace(api_key, "[REDACTED]")
+        logger.exception("Gemini Interactions API failed; code=%s error_type=%s message=%s",
+                         code, type(exc).__name__, message[:500])
+        if code == 503:
+            raise LLMExtractionError(
+                "Gemini is temporarily overloaded (HTTP 503). I tried once more automatically, but it is still unavailable. Please retry in 30–60 seconds; no calculation was run."
+            ) from exc
         raise LLMExtractionError(
-            f"Gemini API request failed ({type(exc).__name__}). Check Railway logs for details."
+            f"Gemini API request failed ({type(exc).__name__}, HTTP {code or 'unknown'}). Check Railway logs. No calculation was run."
         ) from exc
 
 
