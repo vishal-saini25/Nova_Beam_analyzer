@@ -1,13 +1,13 @@
 # Beam Analysis Assistant (Telegram + DeepSeek + verified solver)
 
-A Telegram long-polling bot that reads beam questions in text or from one image, extracts a strict JSON configuration with DeepSeek Flash, validates it in Python, and passes it to the supplied `beam_analyser.py` solver. Final results are **text only**: no diagrams, plot images, or second LLM explanation call.
+A Telegram long-polling bot that reads beam questions in text or from one image, extracts one or more independent beam-case configurations with DeepSeek Flash in one call, validates each in Python, and passes each case to the supplied `beam_analyser.py` solver. Final results are **text only**: no diagrams, plot images, or second LLM explanation call.
 
 ## Architecture
 
 1. User sends a text problem or one JPEG/PNG/GIF/WebP image.
 2. `llm_client.py` makes one DeepSeek extraction call with JSON output and thinking disabled. Image input is sent in the same call as the text/caption.
 3. `schema.py` validates the extraction shape; `beam_analyser.build_model()` checks engineering inputs.
-4. The bot shows a confirmation summary and waits for Confirm / Edit / Cancel.
+4. The bot shows every extracted case in one confirmation summary and waits for Confirm / Edit / Cancel. Multi-part questions (a), (b), etc. are kept as separate cases.
 5. On confirmation, `solver_service.py` runs the original numerical solver and captures its text report.
 6. Telegram receives the report as text. No model call is used to explain calculated values.
 
@@ -18,7 +18,7 @@ JSON input bypasses DeepSeek entirely. This is useful when the API key is missin
 - `bot.py`: Telegram commands, text/image inputs, confirmation flow, rate limiting.
 - `llm_client.py`: one-call DeepSeek parser for text and images.
 - `prompts.py`: compact, static extraction prompt.
-- `schema.py`: Pydantic extraction schema and required-field checks.
+- `schema.py`: Pydantic extraction schema and required-field checks for one or multiple cases.
 - `solver_service.py`: wrapper around the supplied solver; returns a deterministic text report.
 - `beam_analyser.py`: original uploaded solver, kept intact.
 - `tests/`: offline tests; no DeepSeek request is made during tests.
@@ -64,7 +64,7 @@ You can also paste a raw solver config JSON object directly; it bypasses DeepSee
    - `TELEGRAM_TOKEN_ID` = token from BotFather for this separate beam-analysis bot.
    - `DEEPSEEK_API_KEY` = your DeepSeek API key (needed for natural-language and image extraction).
    - `DEEPSEEK_MODEL` = `deepseek-flash` (optional; this is the default).
-   - `DEEPSEEK_MAX_OUTPUT_TOKENS` = `1600` (optional).
+   - `DEEPSEEK_MAX_OUTPUT_TOKENS` = `2400` (optional; useful for questions with multiple subparts).
    - `LOG_LEVEL` = `INFO` (optional).
 5. Deploy and inspect logs for `Beam Analysis Assistant starting in long-polling mode`.
 6. Test `/start`, `/example`, a text problem, then an image problem.
@@ -73,7 +73,7 @@ This is a worker using Telegram long polling. It does not need a public HTTP dom
 
 ## Token-saving choices
 
-- One extraction call per text/image problem.
+- One extraction call per text/image problem, including all subparts and alternative loading cases.
 - Thinking mode disabled for extraction.
 - JSON output and a capped response size.
 - No duplicate extraction for consistency checking.
